@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>⚡ CYBER BLAST: MULTIPLAYER MESH ⚡</title>
+    <title>⚡ CYBER BLAST: JOYSTICK UPDATE ⚡</title>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
@@ -28,6 +28,32 @@
         .m-btn { width: 70px; height: 70px; border-radius: 50%; color: white; font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px currentColor; }
         #fire-btn { background: rgba(255, 0, 85, 0.6); border: 3px solid #ff0055; color: #ff0055;}
         #jump-btn { background: rgba(0, 255, 204, 0.6); border: 3px solid #00ffcc; color: #00ffcc;}
+
+        /* --- VIRTUAL JOYSTICK CIRCLE UI --- */
+        #joystick-container {
+            display: none;
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 110px;
+            height: 110px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(0, 255, 204, 0.4);
+            border-radius: 50%;
+            z-index: 9;
+            pointer-events: none; /* Event parsing passed to window object instead */
+        }
+        #joystick-knob {
+            position: absolute;
+            top: 35px;
+            left: 35px;
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 255, 204, 0.7);
+            box-shadow: 0 0 10px #00ffcc;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
     </style>
 </head>
 <body>
@@ -37,6 +63,10 @@
     <div id="hud">
         <div>HEALTH: <span id="hp-val" style="color: #00ffcc; font-weight:bold;">100</span>%</div>
         <div style="font-size:11px; margin-top:5px; color:#aaa;">PLAYERS IN LOBBY: <span id="lobby-count" style="color:#fff;">1</span></div>
+    </div>
+
+    <div id="joystick-container">
+        <div id="joystick-knob"></div>
     </div>
 
     <div id="mobile-controls">
@@ -58,16 +88,14 @@
         </p>
         <input type="number" id="peer-id" placeholder="Enter Host Lobby ID" pattern="\d*"><br>
         <button onclick="connectToLobbyHost()">Join Match</button>
-        <p style="font-size:10px; color:#aaa; line-height:1.4; margin-top:12px;">Hosts give their code to multiple friends. Everyone automatically syncs up together.</p>
     </div>
 
     <script>
         let myPeerId = "";
-        let connections = {}; // Track all remote peers inside an object array 
-        let remotePlayers = {}; // Keep threejs mesh instances mapping to individual peerIds
+        let connections = {}; 
+        let remotePlayers = {}; 
         let scene, camera, renderer;
         
-        // Configuration metrics
         let sensitivity = 0.0010; 
         let me = { id: "", x: (Math.random() - 0.5) * 15, y: 0, z: (Math.random() - 0.5) * 15, rotY: 0, rotX: 0, velocityY: 0, hp: 100, gunMesh: null, laserMesh: null };
         
@@ -76,8 +104,10 @@
         let isGrounded = true;
 
         const keys = {};
-        let moveTouch = { active: false, startY: 0, currentY: 0 };
-        let lookTouch = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
+        
+        // Mobile input telemetry data tracking states
+        let moveTouch = { active: false, id: null, startX: 0, startY: 0, currentX: 0, currentY: 0, outX: 0, outY: 0 };
+        let lookTouch = { active: false, id: null, startX: 0, startY: 0, currentX: 0, currentY: 0 };
         let triggerShoot = false, triggerJump = false;
 
         const shortId = Math.floor(1000 + Math.random() * 9000).toString();
@@ -101,23 +131,21 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Arena Surface Mapping Layout
             const grid = new THREE.GridHelper(120, 50, 0x00ffcc, 0x112211);
             grid.position.y = -1;
             scene.add(grid);
             scene.add(new THREE.AmbientLight(0xffffff, 0.9));
 
-            // Setup Client Tool Model
             me.gunMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5), new THREE.MeshBasicMaterial({ color: 0x00ffcc }));
             scene.add(me.gunMesh);
 
-            // Setup Client Projectile Track Tracer
             me.laserMesh = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 4), new THREE.MeshBasicMaterial({ color: 0x00ffff }));
             scene.add(me.laserMesh);
             me.laserMesh.visible = false;
 
             if ('ontouchstart' in window) {
                 document.getElementById("mobile-controls").style.display = "flex";
+                document.getElementById("joystick-container").style.display = "block";
                 setupMobileInput();
             } else {
                 setupPCInput();
@@ -133,7 +161,7 @@
             animateGameLoop();
         }
 
-        // --- 2. GENERATE COMPOSITE PLAYER ENEMY MODELS ON CONNECT ---
+        // --- 2. MULTIPLAYER ENTITY MANIPULATION ---
         function createRemotePlayerMesh(id) {
             let pGroup = new THREE.Group();
             let pMat = new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true });
@@ -168,7 +196,7 @@
             document.getElementById("lobby-count").innerText = Object.keys(remotePlayers).length + 1;
         }
 
-        // --- 3. INPUT SENSITIVITY SYSTEMS ---
+        // --- 3. INPUT SYSTEMS AND VIRTUAL JOYSTICK PROCESSING ---
         function setupPCInput() {
             window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.code === "Space") triggerJump = true; });
             window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
@@ -176,7 +204,6 @@
             
             window.addEventListener('mousemove', (e) => {
                 if(document.pointerLockElement === document.body || e.buttons === 1) {
-                    // Leverages slider setting variables dynamically
                     me.rotY -= e.movementX * sensitivity;
                     me.rotX -= e.movementY * sensitivity;
                     me.rotX = Math.max(-Math.PI/3, Math.min(Math.PI/3, me.rotX));
@@ -186,18 +213,34 @@
         }
 
         function setupMobileInput() {
+            const joystickContainer = document.getElementById("joystick-container");
+            const joystickKnob = document.getElementById("joystick-knob");
+            const maxRadius = 35; // Maximum radius the joystick knob can drift inside outer ring
+
             window.addEventListener('touchstart', (e) => {
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     let touch = e.changedTouches[i];
                     if(touch.target.id === "fire-btn") { triggerShoot = true; continue; }
                     if(touch.target.id === "jump-btn") { triggerJump = true; continue; }
 
-                    if (touch.clientX < window.innerWidth / 2) {
+                    // Left Screen Area: Spawn/Lock movement joystick tracking metrics
+                    if (touch.clientX < window.innerWidth / 2 && !moveTouch.active) {
                         moveTouch.active = true;
+                        moveTouch.id = touch.identifier;
+                        
+                        // Dynamically snap joystick visual frame base directly onto thumb target coordinate
+                        joystickContainer.style.left = `${touch.clientX - 55}px`;
+                        joystickContainer.style.bottom = `${window.innerHeight - touch.clientY - 55}px`;
+                        
+                        moveTouch.startX = touch.clientX;
                         moveTouch.startY = touch.clientY;
+                        moveTouch.currentX = touch.clientX;
                         moveTouch.currentY = touch.clientY;
-                    } else {
+                    } 
+                    // Right Screen Area: Look Swipe Vector Initialization
+                    else if (touch.clientX >= window.innerWidth / 2 && !lookTouch.active) {
                         lookTouch.active = true;
+                        lookTouch.id = touch.identifier;
                         lookTouch.startX = touch.clientX;
                         lookTouch.startY = touch.clientY;
                         lookTouch.currentX = touch.clientX;
@@ -209,8 +252,31 @@
             window.addEventListener('touchmove', (e) => {
                 for (let i = 0; i < e.touches.length; i++) {
                     let touch = e.touches[i];
-                    if (touch.clientX < window.innerWidth / 2 && moveTouch.active) moveTouch.currentY = touch.clientY;
-                    else if (touch.clientX >= window.innerWidth / 2 && lookTouch.active) {
+                    
+                    if (touch.identifier === moveTouch.id && moveTouch.active) {
+                        moveTouch.currentX = touch.clientX;
+                        moveTouch.currentY = touch.clientY;
+
+                        // Calculate spatial drag delta distances
+                        let dx = moveTouch.currentX - moveTouch.startX;
+                        let dy = moveTouch.currentY - moveTouch.startY;
+                        let distance = Math.sqrt(dx * dx + dy * dy);
+
+                        // Clamp visual coordinate transforms to bounded outer parameters
+                        if (distance > maxRadius) {
+                            dx = (dx / distance) * maxRadius;
+                            dy = (dy / distance) * maxRadius;
+                            distance = maxRadius;
+                        }
+
+                        // Reposition visual joystick knob asset
+                        joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+
+                        // Normalize output metrics between -1.0 and 1.0 for the physics engine
+                        moveTouch.outX = dx / maxRadius;
+                        moveTouch.outY = dy / maxRadius;
+                    } 
+                    else if (touch.identifier === lookTouch.id && lookTouch.active) {
                         lookTouch.currentX = touch.clientX;
                         lookTouch.currentY = touch.clientY;
                     }
@@ -220,24 +286,34 @@
             window.addEventListener('touchend', (e) => {
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     let touch = e.changedTouches[i];
-                    if (touch.clientX < window.innerWidth / 2) moveTouch.active = false;
-                    if (touch.clientX >= window.innerWidth / 2) lookTouch.active = false;
+                    
+                    if (touch.identifier === moveTouch.id) {
+                        moveTouch.active = false;
+                        moveTouch.id = null;
+                        moveTouch.outX = 0;
+                        moveTouch.outY = 0;
+                        
+                        // Reset visual indicators to absolute base position templates
+                        joystickKnob.style.transform = `translate(0px, 0px)`;
+                        joystickContainer.style.left = `40px`;
+                        joystickContainer.style.bottom = `40px`;
+                    }
+                    if (touch.identifier === lookTouch.id) {
+                        lookTouch.active = false;
+                        lookTouch.id = null;
+                    }
                 }
             });
         }
 
         // --- 4. MESH P2P NETWORKING LOGIC ---
-        let peerIdList = [];
         let isInitialized = false;
 
         let peer = new Peer(shortId);
         peer.on('open', id => { myPeerId = id; me.id = id; document.getElementById("my-id").innerText = id; });
         peer.on('error', err => { if (err.type === 'unavailable-id') window.location.reload(); });
         
-        // Host listener rules intercepting additional multiple players
-        peer.on('connection', incomingConn => {
-            handleDataSyncConnection(incomingConn);
-        });
+        peer.on('connection', incomingConn => { handleDataSyncConnection(incomingConn); });
 
         function connectToLobbyHost() {
             let targetHostId = document.getElementById("peer-id").value;
@@ -250,14 +326,11 @@
                 connections[c.peer] = c;
                 if(!isInitialized) { initGameArena(); isInitialized = true; }
                 createRemotePlayerMesh(c.peer);
-                
-                // Alert peer network clusters about mesh presence changes
                 broadcastPacket({ type: "mesh-introduction", activePeers: Object.keys(connections) });
             });
 
             c.on('data', data => {
                 if(data.type === "mesh-introduction") {
-                    // Iteratively loop linking un-connected mesh peers together dynamically
                     data.activePeers.forEach(id => {
                         if(id !== myPeerId && !connections[id]) {
                             let newConn = peer.connect(id);
@@ -314,22 +387,22 @@
             setTimeout(() => document.getElementById("copy-btn").innerText = "Copy", 2000);
         }
 
-        // --- 5. EXECUTION MATRIX ENGINE ---
+        // --- 5. RUNTIME PHYSICS ENGINE LOOP ---
         let isShooting = false;
 
         function animateGameLoop() {
             requestAnimationFrame(animateGameLoop);
 
-            // Turn Engine
+            // Turn Engine Keyboard / Arrow maps
             if (keys['arrowleft']) me.rotY += 0.03;
             if (keys['arrowright']) me.rotY -= 0.03;
             if (keys['arrowup']) me.rotX = Math.min(Math.PI/3, me.rotX + 0.03);
             if (keys['arrowdown']) me.rotX = Math.max(-Math.PI/3, me.rotX - 0.03);
 
+            // Right Screen Swiping Calculations
             if (lookTouch.active) {
                 let deltaX = lookTouch.currentX - lookTouch.startX;
                 let deltaY = lookTouch.currentY - lookTouch.startY;
-                // Applies sensitivity slider configuration dynamically to touch engines
                 me.rotY -= deltaX * (sensitivity * 0.15);
                 me.rotX -= deltaY * (sensitivity * 0.15);
                 me.rotX = Math.max(-Math.PI/3, Math.min(Math.PI/3, me.rotX));
@@ -337,20 +410,28 @@
                 lookTouch.startY = lookTouch.currentY;
             }
 
-            // Translation Processing Engine
-            let moveSpeed = 0;
-            if (keys['w']) moveSpeed = 0.14;
-            if (keys['s']) moveSpeed = -0.14;
+            // --- LOCOMOTION TRANSLATION VECTOR LOGIC ---
+            let forwardSpeed = 0;
+            let strafeSpeed = 0;
+
+            if (keys['w']) forwardSpeed = 0.14;
+            if (keys['s']) forwardSpeed = -0.14;
+            if (keys['a']) strafeSpeed = -0.10;
+            if (keys['d']) strafeSpeed = 0.10;
+
+            // Handle virtual joystick physics vectors
             if (moveTouch.active) {
-                let deltaY = moveTouch.startY - moveTouch.currentY;
-                moveSpeed = Math.min(Math.max(deltaY * 0.005, -0.14), 0.14);
+                // outY is negative when dragging up, mapping to forward motion
+                forwardSpeed = -moveTouch.outY * 0.14;
+                strafeSpeed = moveTouch.outX * 0.10;
             }
-            if(me.hp <= 0) moveSpeed = 0;
+            if(me.hp <= 0) { forwardSpeed = 0; strafeSpeed = 0; }
 
-            me.x -= Math.sin(me.rotY) * moveSpeed;
-            me.z -= Math.cos(me.rotY) * moveSpeed;
+            // Apply direction transforms matching local orientation profiles
+            me.x -= Math.sin(me.rotY) * forwardSpeed - Math.cos(me.rotY) * strafeSpeed;
+            me.z -= Math.cos(me.rotY) * forwardSpeed + Math.sin(me.rotY) * strafeSpeed;
 
-            // Gravitational Acceleration Physics
+            // Vertical Velocity Interceptors
             if (triggerJump && isGrounded && me.hp > 0) { me.velocityY = JUMP_FORCE; isGrounded = false; }
             triggerJump = false;
 
@@ -364,7 +445,6 @@
             me.gunMesh.position.set(me.x - Math.sin(me.rotY + 0.25) * 0.35, me.y + 0.85, me.z - Math.cos(me.rotY + 0.25) * 0.35);
             me.gunMesh.rotation.set(me.rotX, me.rotY, 0, 'YXZ');
 
-            // Firing Register and Broadside Ray Intersection Engines
             if (triggerShoot && !isShooting && me.hp > 0) {
                 triggerShoot = false;
                 isShooting = true;
@@ -372,7 +452,6 @@
                 me.laserMesh.rotation.set(me.rotX, me.rotY, 0, 'YXZ');
                 me.laserMesh.visible = true;
 
-                // Loop checking trajectory intercepts across all active mesh nodes
                 for(let id in remotePlayers) {
                     let targetPlayer = remotePlayers[id].group;
                     let dist = camera.position.distanceTo(targetPlayer.position);
@@ -386,7 +465,7 @@
                         Math.abs(targetY - (targetPlayer.position.y + 0.8)) < 1.3) {
                         
                         broadcastPacket({ type: "hit-notification", targetId: id });
-                        document.getElementById("msg").innerText = "🎯 REGISTERED SPLIT-HIT ON " + id;
+                        document.getElementById("msg").innerText = "🎯 REGISTERED HIT!";
                         setTimeout(() => document.getElementById("msg").innerText = "", 1000);
                     }
                 }
@@ -402,7 +481,6 @@
                 me.laserMesh.position.z -= Math.cos(me.rotY) * Math.cos(me.rotX) * 1.8;
             }
 
-            // Sync Core Telemetry Vector Updates across all network clusters
             broadcastPacket({
                 type: "state-update",
                 x: me.x, y: me.y, z: me.z, rotY: me.rotY, rotX: me.rotX,
@@ -419,4 +497,4 @@
         });
     </script>
 </body>
-</html>
+    </html>
