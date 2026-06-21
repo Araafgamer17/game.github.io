@@ -2,30 +2,44 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🌐 3D CYBER BLAST ONLINE 🌐</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>📱 3D CYBER BLAST MOBILE 📱</title>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: monospace; color: #fff; }
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; border: 1px solid #0f0; }
-        input, button { padding: 8px; margin: 4px 0; border-radius: 4px; border: none; font-family: monospace; font-weight: bold;}
-        button { background: #0f0; color: #000; cursor: pointer; }
-        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #0f0; font-size: 24px; pointer-events: none; z-index: 5; display: none;}
-        #msg { position: absolute; bottom: 20px; width: 100%; text-align: center; font-size: 20px; color: #ff0055; text-shadow: 0 0 10px #ff0055; }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: monospace; color: #fff; user-select: none; touch-action: none; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; border: 1px solid #0f0; width: 85%; max-width: 320px; }
+        input, button { padding: 12px; margin: 6px 0; border-radius: 6px; border: none; font-family: monospace; font-weight: bold; width: 100%; box-sizing: border-box;}
+        input { background: #111; color: #fff; border: 1px solid #333; }
+        button { background: #0f0; color: #000; cursor: pointer; font-size: 1rem; }
+        
+        /* Mobile Touch Zones */
+        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #0f0; font-size: 28px; pointer-events: none; z-index: 5; display: none;}
+        #msg { position: absolute; top: 15%; width: 100%; text-align: center; font-size: 24px; color: #ff0055; text-shadow: 0 0 10px #ff0055; z-index: 6; pointer-events: none;}
+        
+        /* Mobile Action Controls */
+        #mobile-controls { display: none; position: absolute; bottom: 30px; right: 30px; z-index: 8; }
+        #fire-btn { width: 80px; height: 80px; background: rgba(255, 0, 85, 0.7); border: 3px solid #ff0055; border-radius: 50%; color: white; font-weight: bold; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px #ff0055;}
+        
+        /* Touch Instructions Overlay */
+        #touch-guides { display: none; position: absolute; bottom: 10px; left: 10px; font-size: 12px; color: #64748b; z-index: 2; pointer-events: none;}
     </style>
 </head>
 <body>
 
     <div id="crosshair">+</div>
     <div id="msg"></div>
+    <div id="touch-guides">← Drag Left Screen to Move | Drag Right Screen to Aim →</div>
+
+    <div id="mobile-controls">
+        <div id="fire-btn">FIRE</div>
+    </div>
 
     <div id="ui">
-        <h3>⚡ 3D Cyber Blast</h3>
-        <p>Your ID: <b id="my-id" style="color:#0f0;">Connecting...</b></p>
-        <input type="text" id="peer-id" placeholder="Friend's ID"><br>
+        <h3>⚡ 3D Cyber Blast Mobile</h3>
+        <p>Your Phone ID:< br><b id="my-id" style="color:#0f0; word-break: break-all;">Connecting...</b></p>
+        <input type="text" id="peer-id" placeholder="Paste Opponent Phone ID"><br>
         <button onclick="connectToFriend()">Connect & Play</button>
-        <p style="font-size:11px; color:#aaa;">Move: WASD | Shoot: SPACEBAR</p>
     </div>
 
     <script>
@@ -33,9 +47,13 @@
         let scene, camera, renderer;
         let me = { x: 0, z: 0, rotY: 0, laser: null };
         let opponent = { mesh: null, laser: null };
-        const keys = {};
+        
+        // Touch tracking states
+        let moveTouch = { active: false, startY: 0, currentY: 0 };
+        let lookTouch = { active: false, startX: 0, currentX: 0 };
+        let triggerShoot = false;
 
-        // --- 1. SET UP 3D GRAPHICS ENGINE (Three.js) ---
+        // --- 1. INITIALIZE ENGINE & GRAPHICS ---
         function init3D() {
             scene = new THREE.Scene();
             scene.fog = new THREE.FogExp2(0x000000, 0.05);
@@ -45,52 +63,97 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Neon Grid Floor
-            const grid = new THREE.GridHelper(100, 50, 0x00ff00, 0x222222);
+            // Neon Grid Layout Arena
+            const grid = new THREE.GridHelper(100, 40, 0x00ff00, 0x222222);
             grid.position.y = -1;
             scene.add(grid);
 
-            // Lighting
-            const light = new THREE.AmbientLight(0xffffff, 0.8);
-            scene.add(light);
+            // Light mapping
+            scene.add(new THREE.AmbientLight(0xffffff, 0.9));
 
-            // Build Opponent Mesh (Neon Pink Cube)
-            const geo = new THREE.BoxGeometry(1.5, 1.5, 1.5);
-            const mat = new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true });
-            opponent.mesh = new THREE.Mesh(geo, mat);
+            // Enemy Target Box (Wireframe Neon Pink)
+            opponent.mesh = new THREE.Mesh(
+                new THREE.BoxGeometry(1.6, 2, 1.6), 
+                new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true })
+            );
             scene.add(opponent.mesh);
 
-            // Setup Laser Graphics
-            const laserGeo = new THREE.BoxGeometry(0.2, 0.2, 5);
+            // Laser Setup 
+            const laserGeo = new THREE.BoxGeometry(0.15, 0.15, 4);
             me.laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
             opponent.laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff0055 }));
             scene.add(me.laser); scene.add(opponent.laser);
             me.laser.visible = opponent.laser.visible = false;
 
-            // Start Positions depending on network role
-            me.z = role === "host" ? 15 : -15;
+            // Spawn settings based on network state
+            me.z = role === "host" ? 12 : -12;
             me.rotY = role === "host" ? 0 : Math.PI;
 
-            window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
-            window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+            // Swap interface to Touch Screen Controls
             document.getElementById("ui").style.display = "none";
             document.getElementById("crosshair").style.display = "block";
+            document.getElementById("mobile-controls").style.display = "block";
+            document.getElementById("touch-guides").style.display = "block";
 
+            setupMobileInput();
             animate3D();
         }
 
-        // --- 2. MULTIPLAYER NETWORKING (PeerJS) ---
+        // --- 2. MOBILE TOUCH CONTROLS ARCHITECTURE ---
+        function setupMobileInput() {
+            window.addEventListener('touchstart', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    let touch = e.changedTouches[i];
+                    
+                    // If tap hits fire button, skip joystick sorting
+                    if(touch.target.id === "fire-btn") {
+                        triggerShoot = true;
+                        continue;
+                    }
+
+                    // Split screen: Left half moves, Right half aims
+                    if (touch.clientX < window.innerWidth / 2) {
+                        moveTouch.active = true;
+                        moveTouch.startY = touch.clientY;
+                        moveTouch.currentY = touch.clientY;
+                    } else {
+                        lookTouch.active = true;
+                        lookTouch.startX = touch.clientX;
+                        lookTouch.currentX = touch.clientX;
+                    }
+                }
+            }, { passive: false });
+
+            window.addEventListener('touchmove', (e) => {
+                for (let i = 0; i < e.touches.length; i++) {
+                    let touch = e.touches[i];
+                    if (touch.clientX < window.innerWidth / 2 && moveTouch.active) {
+                        moveTouch.currentY = touch.clientY;
+                    } else if (touch.clientX >= window.innerWidth / 2 && lookTouch.active) {
+                        lookTouch.currentX = touch.clientX;
+                    }
+                }
+            }, { passive: false });
+
+            window.addEventListener('touchend', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    let touch = e.changedTouches[i];
+                    if (touch.clientX < window.innerWidth / 2) moveTouch.active = false;
+                    if (touch.clientX >= window.innerWidth / 2) lookTouch.active = false;
+                }
+            });
+        }
+
+        // --- 3. PEERJS MOBILE P2P SYSTEM ---
         peer = new Peer();
         peer.on('open', id => document.getElementById("my-id").innerText = id);
         
-        // Host Receiver
         peer.on('connection', c => {
             conn = c; role = "host";
             conn.on('open', init3D);
             setupNetwork();
         });
 
-        // Guest Connector
         function connectToFriend() {
             const id = document.getElementById("peer-id").value;
             conn = peer.connect(id); role = "guest";
@@ -100,7 +163,6 @@
 
         function setupNetwork() {
             conn.on('data', data => {
-                // Update opponent coordinates from network pack
                 opponent.mesh.position.set(data.x, 0, data.z);
                 opponent.mesh.rotation.y = data.rot;
                 
@@ -113,76 +175,81 @@
                 }
 
                 if (data.hitMe) {
-                    document.getElementById("msg").innerText = "YOU GOT BLASTED!";
-                    setTimeout(() => document.getElementById("msg").innerText = "", 2000);
+                    document.getElementById("msg").innerText = "💥 HIT! YOU LOSE!";
+                    setTimeout(() => document.getElementById("msg").innerText = "", 1500);
                 }
             });
         }
 
-        // --- 3. GAME LOOP, CONTROLS & PHYSICS ---
+        // --- 4. GRAPHICS TICK & LOGIC ENGINE ---
         let isShooting = false;
         let hitDetected = false;
 
         function animate3D() {
             requestAnimationFrame(animate3D);
 
-            // Handle Camera Rotation & Movement
-            if (keys['a']) me.rotY += 0.04;
-            if (keys['d']) me.rotY -= 0.04;
-            
-            let speed = 0.2;
-            if (keys['w']) {
-                me.x -= Math.sin(me.rotY) * speed;
-                me.z -= Math.cos(me.rotY) * speed;
-            }
-            if (keys['s']) {
-                me.x += Math.sin(me.rotY) * speed;
-                me.z += Math.cos(me.rotY) * speed;
+            // Compute Mobile Aiming (Look Touch Drag Delta)
+            if (lookTouch.active) {
+                let deltaX = lookTouch.currentX - lookTouch.startX;
+                me.rotY -= deltaX * 0.0005; // Sensitivity tuner
             }
 
-            // Bind Camera right behind your character viewpoint (First Person style)
-            camera.position.set(me.x, 0.5, me.z);
+            // Compute Mobile Locomotion (Move Touch Drag Delta)
+            if (moveTouch.active) {
+                let deltaY = moveTouch.startY - moveTouch.currentY;
+                let moveSpeed = Math.min(Math.max(deltaY * 0.005, -0.15), 0.15); // Velocity clamp
+                
+                // Vector geometry translation matching camera angle
+                me.x -= Math.sin(me.rotY) * moveSpeed;
+                me.z -= Math.cos(me.rotY) * moveSpeed;
+            }
+
+            // Lock first-person perspective tracking
+            camera.position.set(me.x, 0.4, me.z);
             camera.rotation.y = me.rotY;
 
-            // Handle Shooting Input
-            if (keys[' '] && !isShooting) {
+            // Combat Fire System
+            if (triggerShoot && !isShooting) {
+                triggerShoot = false; // Reset mobile trigger flag
                 isShooting = true;
                 me.laser.position.set(me.x, 0, me.z);
                 me.laser.rotation.y = me.rotY;
                 me.laser.visible = true;
 
-                // Simple 3D Bullet Raycast collision math
-                // Check if opponent cube is in front of our pointing camera view angle
+                // Hit Registration Calculations
                 let dist = camera.position.distanceTo(opponent.mesh.position);
                 let targetX = me.x - Math.sin(me.rotY) * dist;
                 let targetZ = me.z - Math.cos(me.rotY) * dist;
                 
-                if (Math.abs(targetX - opponent.mesh.position.x) < 1.5 && Math.abs(targetZ - opponent.mesh.position.z) < 1.5) {
+                if (Math.abs(targetX - opponent.mesh.position.x) < 1.3 && Math.abs(targetZ - opponent.mesh.position.z) < 1.3) {
                     hitDetected = true;
-                    document.getElementById("msg").innerText = "TARGET HIT!";
+                    document.getElementById("msg").innerText = "🎯 TARGET BLASTED!";
                     setTimeout(() => document.getElementById("msg").innerText = "", 1500);
                 }
 
-                setTimeout(() => { isShooting = false; me.laser.visible = false; hitDetected = false; }, 200);
+                setTimeout(() => { isShooting = false; me.laser.visible = false; hitDetected = false; }, 250);
+            } else {
+                triggerShoot = false; // Wipe out spam triggers
             }
 
-            // Animate local laser forward if fired
             if (isShooting) {
-                me.laser.position.x -= Math.sin(me.rotY) * 1.5;
-                me.laser.position.z -= Math.cos(me.rotY) * 1.5;
+                me.laser.position.x -= Math.sin(me.rotY) * 1.6;
+                me.laser.position.z -= Math.cos(me.rotY) * 1.6;
             }
 
-            // Outbound Data Transmission Pack (Keeps packets small/lightweight)
-            conn.send({
-                x: me.x, z: me.z, rot: me.rotY,
-                shooting: isShooting, lx: me.laser.position.x, lz: me.laser.position.z,
-                hitMe: hitDetected
-            });
+            // Send standard light telemetry sync packet
+            if (conn && conn.open) {
+                conn.send({
+                    x: me.x, z: me.z, rot: me.rotY,
+                    shooting: isShooting, lx: me.laser.position.x, lz: me.laser.position.z,
+                    hitMe: hitDetected
+                });
+            }
 
             renderer.render(scene, camera);
         }
 
-        // Handle Resizing window flawlessly
+        // Automatic Screen Rescaling
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
