@@ -3,120 +3,147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>📱 3D CYBER BLAST MOBILE 📱</title>
+    <title>⚡ 3D CYBER BLAST HYBRID ⚡</title>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: monospace; color: #fff; user-select: none; touch-action: none; }
         #ui { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; border: 1px solid #0f0; width: 85%; max-width: 320px; }
         input, button { padding: 12px; margin: 6px 0; border-radius: 6px; border: none; font-family: monospace; font-weight: bold; width: 100%; box-sizing: border-box;}
-        input { background: #111; color: #fff; border: 1px solid #333; text-align: center; font-size: 1.2rem; letter-spacing: 2px;}
+        input { background: #111; color: #fff; border: 1px solid #333; text-align: center; font-size: 1.2rem; }
         button { background: #0f0; color: #000; cursor: pointer; font-size: 1rem; }
         
-        /* Copy button styling */
         #copy-btn { background: #334155; color: #fff; padding: 6px 12px; font-size: 11px; display: inline-block; width: auto; margin-left: 10px; border-radius: 4px;}
-        
-        /* Mobile Touch Zones */
         #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #0f0; font-size: 28px; pointer-events: none; z-index: 5; display: none;}
         #msg { position: absolute; top: 15%; width: 100%; text-align: center; font-size: 24px; color: #ff0055; text-shadow: 0 0 10px #ff0055; z-index: 6; pointer-events: none;}
         
-        /* Mobile Action Controls */
-        #mobile-controls { display: none; position: absolute; bottom: 30px; right: 30px; z-index: 8; }
-        #fire-btn { width: 80px; height: 80px; background: rgba(255, 0, 85, 0.7); border: 3px solid #ff0055; border-radius: 50%; color: white; font-weight: bold; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px #ff0055;}
+        /* HUD Display */
+        #hud { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 5px; font-size: 18px; border: 1px solid #ff0055; display: none; z-index: 7;}
         
-        /* Touch Instructions Overlay */
-        #touch-guides { display: none; position: absolute; bottom: 10px; left: 10px; font-size: 12px; color: #64748b; z-index: 2; pointer-events: none;}
+        /* Mobile Specific Layout Elements */
+        #mobile-controls { display: none; position: absolute; bottom: 30px; right: 30px; z-index: 8; gap: 15px; }
+        .m-btn { width: 70px; height: 70px; border-radius: 50%; color: white; font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px currentColor; }
+        #fire-btn { background: rgba(255, 0, 85, 0.7); border: 3px solid #ff0055; color: #ff0055;}
+        #jump-btn { background: rgba(0, 255, 204, 0.7); border: 3px solid #00ffcc; color: #00ffcc; font-size: 0.9rem;}
     </style>
 </head>
 <body>
 
     <div id="crosshair">+</div>
     <div id="msg"></div>
-    <div id="touch-guides">← Drag Left Screen to Move | Drag Right Screen to Aim →</div>
+    <div id="hud">HEALTH: <span id="hp-val" style="color: #ff0055;">100</span></div>
 
     <div id="mobile-controls">
-        <div id="fire-btn">FIRE</div>
+        <div id="jump-btn" class="m-btn">JUMP</div>
+        <div id="fire-btn" class="m-btn">FIRE</div>
     </div>
 
     <div id="ui">
-        <h3>⚡ 3D Cyber Blast Mobile</h3>
+        <h3>⚡ 3D Cyber Blast (PC & Mobile)</h3>
         <p>Your Room Code: <b id="my-id" style="color:#0f0; font-size: 1.4rem;">...</b> 
            <button id="copy-btn" onclick="copyRoomCode()">Copy</button>
         </p>
         <input type="number" id="peer-id" placeholder="Enter 4-Digit Code" pattern="\d*"><br>
         <button onclick="connectToFriend()">Connect & Play</button>
+        <p style="font-size:10px; color:#aaa; line-height:1.4;">PC: WASD to Move | Mouse/Arrows to Aim | SPACE to Jump | Click to Shoot<br>MOBILE: Drag left/right screen halves | Tap UI buttons</p>
     </div>
 
     <script>
         let peer, conn, role = "";
         let scene, camera, renderer;
-        let me = { x: 0, z: 0, rotY: 0, laser: null };
-        let opponent = { mesh: null, laser: null };
         
-        // Touch tracking states
+        // Physics & Entities Local State
+        let me = { x: 0, y: 0, z: 0, rotY: 0, velocityY: 0, hp: 100, gunMesh: null, laserMesh: null };
+        let opponent = { mesh: null, laserMesh: null, y: 0 };
+        
+        const GRAVITY = -0.015;
+        const JUMP_FORCE = 0.35;
+        let isGrounded = true;
+
+        // Peripheral Inputs Trackers
+        const keys = {};
         let moveTouch = { active: false, startY: 0, currentY: 0 };
         let lookTouch = { active: false, startX: 0, currentX: 0 };
-        let triggerShoot = false;
+        let triggerShoot = false, triggerJump = false;
 
-        // Generate a clean 4-digit number for the room code
         const shortId = Math.floor(1000 + Math.random() * 9000).toString();
 
-        // --- 1. INITIALIZE ENGINE & GRAPHICS ---
+        // --- 1. ENGINE GRAPHICS SETUP ---
         function init3D() {
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x000000, 0.05);
+            scene.fog = new THREE.FogExp2(0x000000, 0.04);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Neon Grid Layout Arena
+            // Floor Matrix Grid Layout
             const grid = new THREE.GridHelper(100, 40, 0x00ff00, 0x222222);
             grid.position.y = -1;
             scene.add(grid);
-
-            // Light mapping
             scene.add(new THREE.AmbientLight(0xffffff, 0.9));
 
-            // Enemy Target Box (Wireframe Neon Pink)
+            // Enemy Player Mesh Modeling
             opponent.mesh = new THREE.Mesh(
                 new THREE.BoxGeometry(1.6, 2, 1.6), 
                 new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true })
             );
             scene.add(opponent.mesh);
 
-            // Laser Setup 
-            const laserGeo = new THREE.BoxGeometry(0.15, 0.15, 4);
-            me.laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
-            opponent.laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff0055 }));
-            scene.add(me.laser); scene.add(opponent.laser);
-            me.laser.visible = opponent.laser.visible = false;
+            // Build Gun (Welded directly onto player view camera tracking model frame)
+            const gunGeo = new THREE.BoxGeometry(0.15, 0.15, 0.6);
+            const gunMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+            me.gunMesh = new THREE.Mesh(gunGeo, gunMat);
+            scene.add(me.gunMesh);
 
-            // Spawn settings based on network state
+            // Laser Particle Geometry
+            const laserGeo = new THREE.BoxGeometry(0.1, 0.1, 3);
+            me.laserMesh = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
+            opponent.laserMesh = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff0055 }));
+            scene.add(me.laserMesh); scene.add(opponent.laserMesh);
+            me.laserMesh.visible = opponent.laserMesh.visible = false;
+
+            // Spatial Network Configuration
             me.z = role === "host" ? 12 : -12;
             me.rotY = role === "host" ? 0 : Math.PI;
 
-            // Swap interface to Touch Screen Controls
+            // UI Adjuster Setup
             document.getElementById("ui").style.display = "none";
             document.getElementById("crosshair").style.display = "block";
-            document.getElementById("mobile-controls").style.display = "block";
-            document.getElementById("touch-guides").style.display = "block";
-
-            setupMobileInput();
+            document.getElementById("hud").style.display = "block";
+            
+            // Check if device is mobile to activate onscreen joysticks
+            if ('ontouchstart' in window) {
+                document.getElementById("mobile-controls").style.display = "flex";
+                setupMobileInput();
+            } else {
+                setupPCInput();
+            }
+            
             animate3D();
         }
 
-        // --- 2. MOBILE TOUCH CONTROLS ARCHITECTURE ---
+        // --- 2. INPUT ARCHITECTURE MAPPINGS ---
+        function setupPCInput() {
+            window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.code === "Space") triggerJump = true; });
+            window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+            window.addEventListener('mousedown', () => triggerShoot = true);
+            
+            // Allow arrow keys or mouse movement logic adjustments
+            window.addEventListener('mousemove', (e) => {
+                if(document.pointerLockElement === document.body || e.buttons === 1) {
+                    me.rotY -= e.movementX * 0.002;
+                }
+            });
+        }
+
         function setupMobileInput() {
             window.addEventListener('touchstart', (e) => {
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     let touch = e.changedTouches[i];
-                    
-                    if(touch.target.id === "fire-btn") {
-                        triggerShoot = true;
-                        continue;
-                    }
+                    if(touch.target.id === "fire-btn") { triggerShoot = true; continue; }
+                    if(touch.target.id === "jump-btn") { triggerJump = true; continue; }
 
                     if (touch.clientX < window.innerWidth / 2) {
                         moveTouch.active = true;
@@ -128,18 +155,15 @@
                         lookTouch.currentX = touch.clientX;
                     }
                 }
-            }, { passive: false });
+            });
 
             window.addEventListener('touchmove', (e) => {
                 for (let i = 0; i < e.touches.length; i++) {
                     let touch = e.touches[i];
-                    if (touch.clientX < window.innerWidth / 2 && moveTouch.active) {
-                        moveTouch.currentY = touch.clientY;
-                    } else if (touch.clientX >= window.innerWidth / 2 && lookTouch.active) {
-                        lookTouch.currentX = touch.clientX;
-                    }
+                    if (touch.clientX < window.innerWidth / 2 && moveTouch.active) moveTouch.currentY = touch.clientY;
+                    else if (touch.clientX >= window.innerWidth / 2 && lookTouch.active) lookTouch.currentX = touch.clientX;
                 }
-            }, { passive: false });
+            });
 
             window.addEventListener('touchend', (e) => {
                 for (let i = 0; i < e.changedTouches.length; i++) {
@@ -150,26 +174,11 @@
             });
         }
 
-        // --- 3. PEERJS MOBILE P2P SYSTEM ---
-        // Pass the short 4-digit code directly into the Peer constructor
+        // --- 3. PEERJS NETWORKING ---
         peer = new Peer(shortId);
-        
-        peer.on('open', id => {
-            document.getElementById("my-id").innerText = id;
-        });
-        
-        peer.on('error', err => {
-            // If ID is taken, just pick another random one automatically
-            if (err.type === 'unavailable-id') {
-                window.location.reload();
-            }
-        });
-
-        peer.on('connection', c => {
-            conn = c; role = "host";
-            conn.on('open', init3D);
-            setupNetwork();
-        });
+        peer.on('open', id => document.getElementById("my-id").innerText = id);
+        peer.on('error', err => { if (err.type === 'unavailable-id') window.location.reload(); });
+        peer.on('connection', c => { conn = c; role = "host"; conn.on('open', init3D); setupNetwork(); });
 
         function connectToFriend() {
             const id = document.getElementById("peer-id").value;
@@ -180,91 +189,126 @@
 
         function copyRoomCode() {
             navigator.clipboard.writeText(shortId);
-            const copyBtn = document.getElementById("copy-btn");
-            copyBtn.innerText = "Copied!";
-            copyBtn.style.background = "#0f0";
-            copyBtn.style.color = "#000";
-            setTimeout(() => {
-                copyBtn.innerText = "Copy";
-                copyBtn.style.background = "#334155";
-                copyBtn.style.color = "#fff";
-            }, 2000);
+            document.getElementById("copy-btn").innerText = "Copied!";
+            setTimeout(() => document.getElementById("copy-btn").innerText = "Copy", 2000);
         }
 
         function setupNetwork() {
             conn.on('data', data => {
-                opponent.mesh.position.set(data.x, 0, data.z);
+                opponent.mesh.position.set(data.x, data.y, data.z);
                 opponent.mesh.rotation.y = data.rot;
                 
                 if (data.shooting) {
-                    opponent.laser.position.set(data.lx, 0, data.lz);
-                    opponent.laser.rotation.y = data.rot;
-                    opponent.laser.visible = true;
+                    opponent.laserMesh.position.set(data.lx, data.ly, data.lz);
+                    opponent.laserMesh.rotation.y = data.rot;
+                    opponent.laserMesh.visible = true;
                 } else {
-                    opponent.laser.visible = false;
+                    opponent.laserMesh.visible = false;
                 }
 
                 if (data.hitMe) {
-                    document.getElementById("msg").innerText = "💥 HIT! YOU LOSE!";
-                    setTimeout(() => document.getElementById("msg").innerText = "", 1500);
+                    me.hp -= 20;
+                    document.getElementById("hp-val").innerText = Math.max(0, me.hp);
+                    document.getElementById("msg").innerText = "💥 YOU GOT HIT!";
+                    if(me.hp <= 0) document.getElementById("msg").innerText = "💀 GAME OVER - YOU LOSE";
+                    setTimeout(() => document.getElementById("msg").innerText = "", 1200);
                 }
             });
         }
 
-        // --- 4. GRAPHICS TICK & LOGIC ENGINE ---
+        // --- 4. ENGINE MATH LOOP PROCESSING ---
         let isShooting = false;
         let hitDetected = false;
 
         function animate3D() {
             requestAnimationFrame(animate3D);
 
+            // PC Look Angle System
+            if (keys['arrowleft']) me.rotY += 0.04;
+            if (keys['arrowright']) me.rotY -= 0.04;
+            // Mobile Look Drag Angle Delta
             if (lookTouch.active) {
                 let deltaX = lookTouch.currentX - lookTouch.startX;
-                me.rotY -= deltaX * 0.0005;
+                me.rotY -= deltaX * 0.0003;
             }
 
+            // Translation Vector Speed Calculations
+            let moveSpeed = 0;
+            if (keys['w']) moveSpeed = 0.15;
+            if (keys['s']) moveSpeed = -0.15;
             if (moveTouch.active) {
                 let deltaY = moveTouch.startY - moveTouch.currentY;
-                let moveSpeed = Math.min(Math.max(deltaY * 0.005, -0.15), 0.15);
-                
-                me.x -= Math.sin(me.rotY) * moveSpeed;
-                me.z -= Math.cos(me.rotY) * moveSpeed;
+                moveSpeed = Math.min(Math.max(deltaY * 0.005, -0.15), 0.15);
+            }
+            me.x -= Math.sin(me.rotY) * moveSpeed;
+            me.z -= Math.cos(me.rotY) * moveSpeed;
+
+            // Dynamic Gravity Jump Mechanics Physics Engine
+            if (triggerJump && isGrounded) {
+                me.velocityY = JUMP_FORCE;
+                isGrounded = false;
+            }
+            triggerJump = false; // clear edge triggers
+
+            me.velocityY += GRAVITY;
+            me.y += me.velocityY;
+
+            // Ground Limit Interceptor 
+            if (me.y <= 0) {
+                me.y = 0;
+                me.velocityY = 0;
+                isGrounded = true;
             }
 
-            camera.position.set(me.x, 0.4, me.z);
+            // Sync Main Viewport Camera Positioning Tracking
+            camera.position.set(me.x, me.y + 0.4, me.z);
             camera.rotation.y = me.rotY;
 
-            if (triggerShoot && !isShooting) {
+            // Lock First-Person Gun Model In Front Of Camera Screen Space
+            me.gunMesh.position.set(
+                me.x - Math.sin(me.rotY + 0.2) * 0.4,
+                me.y + 0.2,
+                me.z - Math.cos(me.rotY + 0.2) * 0.4
+            );
+            me.gunMesh.rotation.y = me.rotY;
+
+            // Attack Loop Manager
+            if (triggerShoot && !isShooting && me.hp > 0) {
                 triggerShoot = false;
                 isShooting = true;
-                me.laser.position.set(me.x, 0, me.z);
-                me.laser.rotation.y = me.rotY;
-                me.laser.visible = true;
+                me.laserMesh.position.set(me.x, me.y + 0.2, me.z);
+                me.laserMesh.rotation.y = me.rotY;
+                me.laserMesh.visible = true;
 
+                // 3D Raycast Vector Proximity Distance Calculation Intercept
                 let dist = camera.position.distanceTo(opponent.mesh.position);
                 let targetX = me.x - Math.sin(me.rotY) * dist;
                 let targetZ = me.z - Math.cos(me.rotY) * dist;
                 
-                if (Math.abs(targetX - opponent.mesh.position.x) < 1.3 && Math.abs(targetZ - opponent.mesh.position.z) < 1.3) {
+                // Track bounding-box targets including height displacement (jump states)
+                if (Math.abs(targetX - opponent.mesh.position.x) < 1.3 && 
+                    Math.abs(targetZ - opponent.mesh.position.z) < 1.3 &&
+                    Math.abs((me.y + 0.2) - opponent.mesh.position.y) < 2.0) {
                     hitDetected = true;
                     document.getElementById("msg").innerText = "🎯 TARGET BLASTED!";
-                    setTimeout(() => document.getElementById("msg").innerText = "", 1500);
+                    setTimeout(() => document.getElementById("msg").innerText = "", 1200);
                 }
 
-                setTimeout(() => { isShooting = false; me.laser.visible = false; hitDetected = false; }, 250);
+                setTimeout(() => { isShooting = false; me.laserMesh.visible = false; hitDetected = false; }, 200);
             } else {
                 triggerShoot = false;
             }
 
             if (isShooting) {
-                me.laser.position.x -= Math.sin(me.rotY) * 1.6;
-                me.laser.position.z -= Math.cos(me.rotY) * 1.6;
+                me.laserMesh.position.x -= Math.sin(me.rotY) * 1.8;
+                me.laserMesh.position.z -= Math.cos(me.rotY) * 1.8;
             }
 
+            // Output Pipeline Synchronization 
             if (conn && conn.open) {
                 conn.send({
-                    x: me.x, z: me.z, rot: me.rotY,
-                    shooting: isShooting, lx: me.laser.position.x, lz: me.laser.position.z,
+                    x: me.x, y: me.y, z: me.z, rot: me.rotY,
+                    shooting: isShooting, lx: me.laserMesh.position.x, ly: me.laserMesh.position.y, lz: me.laserMesh.position.z,
                     hitMe: hitDetected
                 });
             }
